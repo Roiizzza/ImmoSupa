@@ -1,1 +1,10 @@
 project_id = "ipeycdpqatchpcwymjni"
+
+[functions.analyze-exposee]
+verify_jwt = false
+
+[functions.generate-3d-grundriss]
+verify_jwt = false
+
+[functions.generate-example-exposee]
+verify_jwt = false
