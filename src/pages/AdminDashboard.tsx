@@ -21,7 +21,18 @@ interface Coupon {
   used_at: string | null;
   expires_at: string | null;
   is_active: boolean;
+  max_uses: number;
+  use_count: number;
   created_at: string;
+}
+
+interface CouponRedemption {
+  id: string;
+  coupon_id: string;
+  user_id: string;
+  used_at: string;
+  coupon_code?: string;
+  redeemer_name?: string;
 }
 
 interface UserRow {
@@ -59,19 +70,20 @@ const AdminDashboard = () => {
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [expiryDays, setExpiryDays] = useState("30");
+  const [maxUses, setMaxUses] = useState("1");
 
   // Users
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  // Redeemed coupons with user emails
-  const [redeemedCoupons, setRedeemedCoupons] = useState<(Coupon & { redeemer_email?: string })[]>([]);
+  const [redeemedCoupons, setRedeemedCoupons] = useState<CouponRedemption[]>([]);
 
   useEffect(() => {
     if (!isAdmin) return;
     loadCoupons();
     loadUsers();
+    loadRedemptions();
   }, [isAdmin]);
 
   const loadCoupons = async () => {
@@ -82,21 +94,41 @@ const AdminDashboard = () => {
     if (!error) {
       const all = (data as Coupon[]) || [];
       setCoupons(all);
-      // Build redeemed list with user emails from profiles
-      const redeemed = all.filter((c) => c.used_by);
-      if (redeemed.length > 0) {
-        const userIds = [...new Set(redeemed.map((c) => c.used_by!))];
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("user_id, display_name")
-          .in("user_id", userIds);
-        const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p.display_name]));
-        setRedeemedCoupons(redeemed.map((c) => ({ ...c, redeemer_email: profileMap.get(c.used_by!) || c.used_by! })));
-      } else {
-        setRedeemedCoupons([]);
-      }
     }
     setLoadingCoupons(false);
+  };
+
+  const loadRedemptions = async () => {
+    const { data, error } = await supabase
+      .from("coupon_redemptions")
+      .select("id, coupon_id, user_id, used_at")
+      .order("used_at", { ascending: false });
+    if (error) return;
+
+    const redemptions = (data as CouponRedemption[]) || [];
+    if (redemptions.length === 0) {
+      setRedeemedCoupons([]);
+      return;
+    }
+
+    const couponIds = [...new Set(redemptions.map((r) => r.coupon_id))];
+    const userIds = [...new Set(redemptions.map((r) => r.user_id))];
+
+    const [{ data: couponRows }, { data: profileRows }] = await Promise.all([
+      supabase.from("coupons").select("id, code").in("id", couponIds),
+      supabase.from("profiles").select("user_id, display_name").in("user_id", userIds),
+    ]);
+
+    const couponMap = new Map((couponRows || []).map((c: any) => [c.id, c.code]));
+    const profileMap = new Map((profileRows || []).map((p: any) => [p.user_id, p.display_name]));
+
+    setRedeemedCoupons(
+      redemptions.map((r) => ({
+        ...r,
+        coupon_code: couponMap.get(r.coupon_id) || r.coupon_id,
+        redeemer_name: profileMap.get(r.user_id) || r.user_id,
+      }))
+    );
   };
 
   const loadUsers = async () => {
@@ -114,10 +146,11 @@ const AdminDashboard = () => {
     try {
       const code = generateCode();
       const days = parseInt(expiryDays) || 30;
+      const maxUsesNumber = Math.max(1, parseInt(maxUses) || 1);
       const expires_at = new Date(Date.now() + days * 86400000).toISOString();
-      const { error } = await supabase.from("coupons").insert({ code, created_by: user.id, expires_at } as any);
+      const { error } = await supabase.from("coupons").insert({ code, created_by: user.id, expires_at, max_uses: maxUsesNumber } as any);
       if (error) throw error;
-      toast.success(`Gutschein erstellt: ${code}`);
+      toast.success(`Gutschein erstellt: ${code} (${maxUsesNumber} Nutzungen)`);
       loadCoupons();
     } catch (err: any) {
       toast.error("Fehler", { description: err.message });
@@ -132,6 +165,7 @@ const AdminDashboard = () => {
     else {
       setCoupons((prev) => prev.filter((c) => c.id !== id));
       toast.success("Gutschein gelöscht");
+      loadRedemptions();
     }
   };
 
@@ -333,6 +367,10 @@ const AdminDashboard = () => {
                   <label className="text-sm font-medium text-foreground">Gültigkeit (Tage)</label>
                   <Input type="number" value={expiryDays} onChange={(e) => setExpiryDays(e.target.value)} className="w-32" min="1" max="365" />
                 </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-foreground">Max. Nutzungen</label>
+                  <Input type="number" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} className="w-32" min="1" max="9999" />
+                </div>
                 <Button onClick={createCoupon} disabled={creating} className="gradient-primary text-primary-foreground hover:opacity-90">
                   {creating ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Plus className="w-4 h-4 mr-1.5" />}
                   Gutschein generieren
@@ -352,9 +390,9 @@ const AdminDashboard = () => {
               ) : (
                 <div className="grid gap-3">
                   {coupons.map((coupon, i) => {
-                    const isUsed = !!coupon.used_by;
+                    const isUsedUp = (coupon.use_count || 0) >= (coupon.max_uses || 1);
                     const isExpired = coupon.expires_at && new Date(coupon.expires_at) < new Date();
-                    const status = isUsed ? "used" : isExpired ? "expired" : "active";
+                    const status = isUsedUp ? "used" : isExpired ? "expired" : "active";
                     return (
                       <motion.div key={coupon.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }} className="surface-elevated rounded-xl p-5 flex items-center justify-between">
                         <div className="flex items-center gap-4">
@@ -374,7 +412,7 @@ const AdminDashboard = () => {
                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                               <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Erstellt: {formatDate(coupon.created_at)}</span>
                               {coupon.expires_at && <span>Gültig bis: {formatDate(coupon.expires_at)}</span>}
-                              {isUsed && coupon.used_at && <span className="flex items-center gap-1"><User className="w-3 h-3" />Eingelöst: {formatDate(coupon.used_at)}</span>}
+                              <span className="flex items-center gap-1"><User className="w-3 h-3" />Nutzung: {coupon.use_count || 0}/{coupon.max_uses || 1}</span>
                             </div>
                           </div>
                         </div>
@@ -410,8 +448,8 @@ const AdminDashboard = () => {
                   <tbody>
                     {redeemedCoupons.map((c) => (
                       <tr key={c.id} className="border-b border-border/50">
-                        <td className="py-3 px-3 font-mono font-bold text-foreground">{c.code}</td>
-                        <td className="py-3 px-3 text-foreground">{c.redeemer_email}</td>
+                        <td className="py-3 px-3 font-mono font-bold text-foreground">{c.coupon_code}</td>
+                        <td className="py-3 px-3 text-foreground">{c.redeemer_name}</td>
                         <td className="py-3 px-3 text-muted-foreground">{formatDate(c.used_at)}</td>
                       </tr>
                     ))}

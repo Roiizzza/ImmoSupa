@@ -3,6 +3,7 @@ import { Upload, FileText, Image, X, Camera, FileSpreadsheet, LayoutGrid, PenLin
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 interface UploadedFile {
   id: string;
@@ -30,16 +31,48 @@ const UploadZone = ({ files, onFilesChange, additionalNotes = "", onAdditionalNo
 
   const handleFiles = useCallback(
     (fileList: FileList, forceType?: "image" | "document" | "grundriss") => {
-      const newFiles: UploadedFile[] = Array.from(fileList).map((file) => {
+      const allowedDocExtensions = [".pdf", ".doc", ".docx", ".txt", ".csv", ".rtf", ".xls", ".xlsx", ".json", ".xml", ".md"];
+      const allowedImageMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+
+      const selected = Array.from(fileList);
+      const rejected: string[] = [];
+
+      const isAllowedDocument = (file: File) => {
+        const lower = file.name.toLowerCase();
+        return allowedDocExtensions.some((ext) => lower.endsWith(ext));
+      };
+
+      const isAllowedImage = (file: File) => allowedImageMimeTypes.includes(file.type.toLowerCase());
+
+      const newFiles: UploadedFile[] = selected.flatMap((file) => {
         const isImage = file.type.startsWith("image/");
         const type = forceType || (isImage ? "image" : "document");
-        return {
+
+        const valid =
+          type === "document" ? isAllowedDocument(file) :
+          type === "image" || type === "grundriss" ? isAllowedImage(file) :
+          false;
+
+        if (!valid) {
+          rejected.push(file.name);
+          return [];
+        }
+
+        return [{
           id: crypto.randomUUID(),
           file,
           preview: isImage ? URL.createObjectURL(file) : undefined,
           type,
-        };
+        }];
       });
+
+      if (rejected.length > 0) {
+        toast.error("Ungültiges Dateiformat", {
+          description: `Nicht unterstützt: ${rejected.join(", ")}. Erlaubt: JPG, PNG, WebP sowie PDF/DOCX/TXT/CSV/XLSX/JSON/XML/MD.`,
+        });
+      }
+
+      if (newFiles.length === 0) return;
       onFilesChange([...files, ...newFiles]);
     },
     [files, onFilesChange]

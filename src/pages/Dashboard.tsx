@@ -182,25 +182,47 @@ const Dashboard = () => {
     if (!couponCode.trim() || !user) return;
     setCheckingCoupon(true);
     try {
+      const normalizedCode = couponCode.trim().toUpperCase();
       const { data, error } = await supabase
         .from("coupons")
         .select("*")
-        .eq("code", couponCode.trim().toUpperCase())
+        .eq("code", normalizedCode)
         .eq("is_active", true)
-        .is("used_by", null)
         .maybeSingle();
 
       if (error) throw error;
-      if (!data) { toast.error("Ungültiger oder bereits eingelöster Gutschein."); return; }
+      if (!data) { toast.error("Ungültiger oder nicht aktiver Gutschein."); return; }
       if (data.expires_at && new Date(data.expires_at) < new Date()) { toast.error("Dieser Gutschein ist abgelaufen."); return; }
+      if ((data.use_count ?? 0) >= (data.max_uses ?? 1)) { toast.error("Dieser Gutschein wurde bereits vollständig verbraucht."); return; }
 
+      const { data: existingRedemption, error: redemptionLookupError } = await supabase
+        .from("coupon_redemptions")
+        .select("id")
+        .eq("coupon_id", data.id)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (redemptionLookupError) throw redemptionLookupError;
+      if (existingRedemption) { toast.error("Sie haben diesen Gutschein bereits eingelöst."); return; }
+
+      const { error: redemptionInsertError } = await supabase
+        .from("coupon_redemptions")
+        .insert({ coupon_id: data.id, user_id: user.id } as any);
+      if (redemptionInsertError) throw redemptionInsertError;
+
+      const nextUseCount = (data.use_count ?? 0) + 1;
+      const nextMaxUses = data.max_uses ?? 1;
       const { error: updateError } = await supabase
         .from("coupons")
-        .update({ used_by: user.id, used_at: new Date().toISOString(), is_active: false } as any)
+        .update({
+          used_by: user.id,
+          used_at: new Date().toISOString(),
+          use_count: nextUseCount,
+          is_active: nextUseCount < nextMaxUses,
+        } as any)
         .eq("id", data.id);
       if (updateError) throw updateError;
 
-      toast.success("Gutschein eingelöst! Dieses Exposé ist kostenlos.");
+      toast.success(`Gutschein eingelöst! Verwendungen: ${nextUseCount}/${nextMaxUses}`);
       proceedWithAnalysis();
     } catch (err: any) {
       toast.error("Fehler", { description: err.message });
