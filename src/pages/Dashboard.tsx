@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Building2, ArrowRight, ArrowLeft, Eye, Sparkles, Loader2, FileDown, RotateCcw, Pencil, Save, FolderOpen, LogOut, User, Shield, Wallet, Ticket, AlertTriangle } from "lucide-react";
+import { Building2, ArrowRight, ArrowLeft, Eye, Sparkles, Loader2, FileDown, RotateCcw, Pencil, Save, FolderOpen, LogOut, User, Shield, Ticket } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -30,8 +30,6 @@ const steps = [
   { label: "Vorschau", description: "Fertig!" },
 ];
 
-const VIP_COST = 0.40;
-
 const Dashboard = () => {
   const { user, isAdmin, profile, refreshProfile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -54,7 +52,6 @@ const Dashboard = () => {
   const [showPaywall, setShowPaywall] = useState(false);
   const [couponCode, setCouponCode] = useState("");
   const [checkingCoupon, setCheckingCoupon] = useState(false);
-  const [showTopUpModal, setShowTopUpModal] = useState(false);
 
   const has3dAccess = isAdmin || (profile?.has_3d_access ?? false);
 
@@ -231,27 +228,9 @@ const Dashboard = () => {
     }
   };
 
-  const handleVipPay = async () => {
-    if (!user || !profile) return;
-    if (profile.credits < VIP_COST) {
-      setShowTopUpModal(true);
-      return;
-    }
-    // Deduct credits
-    const { error } = await supabase
-      .from("profiles")
-      .update({ credits: profile.credits - VIP_COST } as any)
-      .eq("user_id", user.id);
-    if (error) { toast.error("Fehler beim Abbuchen."); return; }
-    await refreshProfile();
-    toast.success(`${VIP_COST.toFixed(2)} € vom Wallet abgezogen.`);
-    proceedWithAnalysis();
-  };
-
   const handleStandardPay = () => {
-    // For now, proceed (beta). In production, redirect to Stripe checkout.
-    toast.info("Beta-Phase: Generierung ist aktuell kostenlos.");
-    proceedWithAnalysis();
+    // Intentionally blocked until real checkout is integrated.
+    toast.info("Checkout wird in Kürze aktiviert. Aktuell ist die Generierung nur mit gültigem Gutscheincode möglich.");
   };
 
   const handleAnalysisComplete = useCallback(async (data: ExposeeData, images: string[], grundriss3dUrls?: string[]) => {
@@ -308,13 +287,6 @@ const Dashboard = () => {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            {/* VIP Wallet indicator */}
-            {profile?.is_vip && (
-              <div className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs font-medium">
-                <Wallet className="w-3.5 h-3.5" />
-                {profile.credits.toFixed(2)} €
-              </div>
-            )}
             {(currentStep === 2 || currentStep === 3) && exposeeData && user && (
               <Button variant="outline" size="sm" onClick={handleSaveToAccount} disabled={saving} className="border-border">
                 {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
@@ -462,51 +434,14 @@ const Dashboard = () => {
               <div className="relative flex justify-center text-xs"><span className="bg-background px-2 text-muted-foreground">oder</span></div>
             </div>
 
-            {/* VIP Wallet */}
-            {profile?.is_vip && (
-              <Button onClick={handleVipPay} className="w-full" variant="outline">
-                <Wallet className="w-4 h-4 mr-2" />
-                Mit Wallet bezahlen ({VIP_COST.toFixed(2)} €)
-                <span className="ml-auto text-xs text-muted-foreground">Guthaben: {profile.credits.toFixed(2)} €</span>
-              </Button>
-            )}
-
-            {/* Standard */}
+            {/* Checkout placeholder */}
             <Button onClick={handleStandardPay} className="w-full gradient-primary text-primary-foreground hover:opacity-90">
-              Zum Checkout ({profile?.is_vip ? "Standard-Preis" : "Weiter"})
+              Zum Checkout
             </Button>
 
             <p className="text-[11px] text-muted-foreground text-center">
               Aktuell kostenlos in der Beta-Phase.
             </p>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ===== TOP-UP MODAL ===== */}
-      <Dialog open={showTopUpModal} onOpenChange={setShowTopUpModal}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-500" />
-              Guthaben aufladen
-            </DialogTitle>
-            <DialogDescription>
-              Ihr Wallet-Guthaben reicht nicht aus. Sie benötigen mindestens {VIP_COST.toFixed(2)} €.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="pt-2 space-y-3">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-foreground">{profile?.credits.toFixed(2) || "0.00"} €</p>
-              <p className="text-sm text-muted-foreground">Aktuelles Guthaben</p>
-            </div>
-            <Button className="w-full gradient-primary text-primary-foreground" onClick={() => {
-              toast.info("Stripe-Integration kommt bald. Beta-Phase: Guthaben wird vom Admin zugewiesen.");
-              setShowTopUpModal(false);
-            }}>
-              <Wallet className="w-4 h-4 mr-2" />
-              Guthaben aufladen
-            </Button>
           </div>
         </DialogContent>
       </Dialog>
